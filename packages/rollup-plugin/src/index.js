@@ -4,37 +4,54 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
- * @format
+ * @flow strict
  */
 
-const babel = require('@babel/core');
-const stylexBabelPlugin = require('@stylexjs/babel-plugin');
-const flowSyntaxPlugin = require('@babel/plugin-syntax-flow');
-const jsxSyntaxPlugin = require('@babel/plugin-syntax-jsx');
-const typescriptSyntaxPlugin = require('@babel/plugin-syntax-typescript');
-const path = require('path');
+import { transformAsync } from '@babel/core';
+import stylexBabelPlugin from '@stylexjs/babel-plugin';
+// $FlowFixMe[cannot-resolve-module]
+import flowSyntaxPlugin from '@babel/plugin-syntax-flow';
+// $FlowFixMe[cannot-resolve-module]
+import jsxSyntaxPlugin from '@babel/plugin-syntax-jsx';
+// $FlowFixMe[cannot-resolve-module]
+import typescriptSyntaxPlugin from '@babel/plugin-syntax-typescript';
+import path from 'path';
+import type { Options, Rule } from '@stylexjs/babel-plugin';
+import type { Plugin, PluginContext, TransformResult } from 'rollup';
 
 const IS_DEV_ENV =
   process.env.NODE_ENV === 'development' ||
   process.env.BABEL_ENV === 'development';
 
-module.exports = function stylexPlugin({
+export type PluginOptions = {
+  ...Partial<Options>,
+  fileName?: string,
+  babelConfig?: {
+    plugins: Array<mixed>,
+    presets: Array<mixed>,
+  },
+  ...
+};
+
+export default function stylexPlugin({
   dev = IS_DEV_ENV,
   unstable_moduleResolution = { type: 'commonJS', rootDir: process.cwd() },
   fileName = 'stylex.css',
   babelConfig: { plugins = [], presets = [] } = {},
   ...options
-} = {}) {
-  let stylexRules = {};
+}: PluginOptions = {}): Plugin<> {
+  let stylexRules: { [string]: $ReadOnlyArray<Rule> } = {};
   return {
     name: 'rollup-plugin-stylex',
     buildStart() {
       stylexRules = {};
     },
-    generateBundle() {
-      const rules = Object.values(stylexRules).flat();
+    generateBundle(this: PluginContext) {
+      const rules: Array<Rule> = Object.values(stylexRules).flat();
       if (rules.length > 0) {
         const collectedCSS = stylexBabelPlugin.processStylexRules(rules, true);
+
+        // $FlowExpectedError[object-this-reference]
         this.emitFile({
           fileName,
           source: collectedCSS,
@@ -42,29 +59,47 @@ module.exports = function stylexPlugin({
         });
       }
     },
-    shouldTransformCachedModule({ code: _code, id, cache: _cache, meta }) {
+    shouldTransformCachedModule({ code: _code, id, meta }) {
       stylexRules[id] = meta.stylex;
       return false;
     },
-    async transform(inputCode, id) {
-      const { code, map, metadata } = await babel.transformAsync(inputCode, {
+    async transform(inputCode, id): Promise<TransformResult> {
+      const result = await transformAsync(inputCode, {
         babelrc: false,
         filename: id,
+        // $FlowFixMe
         presets,
+        // $FlowFixMe
         plugins: [
           ...plugins,
           /\.jsx?/.test(path.extname(id))
             ? flowSyntaxPlugin
             : typescriptSyntaxPlugin,
           jsxSyntaxPlugin,
+          // $FlowFixMe
           [stylexBabelPlugin, { dev, unstable_moduleResolution, ...options }],
         ],
       });
-
-      if (!dev && metadata.stylex != null && metadata.stylex.length > 0) {
-        stylexRules[id] = metadata.stylex;
+      if (result == null) {
+        console.warn('stylex: transformAsync returned null');
+        return { code: inputCode };
       }
+      const { code, map, metadata } = result;
+      if (code == null) {
+        console.warn('stylex: transformAsync returned null code');
+        return { code: inputCode };
+      }
+
+      if (
+        !dev &&
+        (metadata: $FlowFixMe).stylex != null &&
+        (metadata: $FlowFixMe).stylex.length > 0
+      ) {
+        stylexRules[id] = (metadata: $FlowFixMe).stylex;
+      }
+
+      // $FlowFixMe
       return { code, map, meta: metadata };
     },
   };
-};
+}
